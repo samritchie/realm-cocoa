@@ -76,10 +76,15 @@ class RealmTests: TestCase {
         NSFileManager.defaultManager().createFileAtPath(defaultRealmPath(),
             contents:"a".dataUsingEncoding(NSUTF8StringEncoding, allowLossyConversion: false),
             attributes: nil)
+
+        let expectedError = Error.FileAccessError
         do {
             _ = try Realm()
             XCTFail("Realm creation should have failed")
+        } catch expectedError {
+            // Success!
         } catch {
+            XCTFail("Expected to catch <\(expectedError)>, but instead caught <\(error)>.")
         }
     }
 
