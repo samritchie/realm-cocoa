@@ -68,6 +68,8 @@ Prebuilt frameworks are now built with Xcode 7.1.
   objects.
 * The `@count`, `@min`, `@max`, `@sum` and `@avg` collection operators are now
   supported in queries.
+* Swift: Added `Error` enum allowing to catch errors e.g. thrown on initializing
+  `RLMRealm`/`Realm` instances.
 
 ### Bugfixes
 
