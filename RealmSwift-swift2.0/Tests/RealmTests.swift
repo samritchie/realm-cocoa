@@ -77,7 +77,7 @@ class RealmTests: TestCase {
             contents:"a".dataUsingEncoding(NSUTF8StringEncoding, allowLossyConversion: false),
             attributes: nil)
 
-        let expectedError = Error.FileAccessError
+        let expectedError = Error.FileAccess
         do {
             _ = try Realm()
             XCTFail("Realm creation should have failed")
