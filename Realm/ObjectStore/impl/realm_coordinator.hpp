@@ -24,7 +24,15 @@
 #include <realm/string_data.hpp>
 
 namespace realm {
+class Results;
+struct AsyncQueryCancelationToken;
+class ClientHistory;
+class SharedGroup;
+
+using Dispatcher = std::function<void (std::function<void()>)>;
+
 namespace _impl {
+class AsyncQuery;
 class CachedRealm;
 class ExternalCommitHelper;
 
@@ -66,13 +74,44 @@ public:
     // Called by m_notifier when there's a new commit to send notifications for
     void on_change();
 
+    static AsyncQueryCancelationToken register_query(const Results& r, Dispatcher dispatcher, std::function<void (Results, std::exception_ptr)> fn);
+    static void unregister_query(AsyncQuery& registration);
+
+    // Advance the Realm to the most recent transaction version which all async
+    // work is complete for
+    void advance_to_ready(Realm& realm);
+    void process_available_async(Realm& realm);
+
 private:
     Realm::Config m_config;
 
     std::mutex m_realm_mutex;
     std::vector<CachedRealm> m_cached_realms;
 
+    std::mutex m_query_mutex;
+    std::vector<std::shared_ptr<_impl::AsyncQuery>> m_new_queries;
+    std::vector<std::shared_ptr<_impl::AsyncQuery>> m_queries;
+
+    // SharedGroup used for actually running async queries
+    std::unique_ptr<ClientHistory> m_query_history;
+    std::unique_ptr<SharedGroup> m_query_sg;
+
+    // SharedGroup used to advance queries in m_new_queries to the main shared
+    // group's transaction version
+    std::unique_ptr<ClientHistory> m_advancer_history;
+    std::unique_ptr<SharedGroup> m_advancer_sg;
+    std::exception_ptr m_async_error;
+
     std::unique_ptr<_impl::ExternalCommitHelper> m_notifier;
+
+    AsyncQueryCancelationToken do_register_query(const Results& r, Dispatcher dispatcher, std::function<void (Results, std::exception_ptr)> fn);
+    void do_unregister_query(AsyncQuery& registration);
+
+    // must be called with m_query_mutex locked
+    void pin_version(uint_fast64_t version, uint_fast32_t index);
+    void update_async_queries();
+
+    void run_async_queries();
 };
 
 } // namespace _impl

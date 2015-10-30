@@ -30,11 +30,38 @@
 #import "RLMUtil.hpp"
 
 #import "results.hpp"
+#import "external_commit_helper.hpp"
 
 #import <objc/runtime.h>
 #import <realm/table_view.hpp>
 
 using namespace realm;
+
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wincomplete-implementation"
+@implementation RLMNotificationToken
+@end
+#pragma clang diagnostic pop
+
+@interface RLMCancellationToken : RLMNotificationToken
+@end
+
+@implementation RLMCancellationToken {
+    realm::AsyncQueryCancelationToken _token;
+}
+- (instancetype)initWithToken:(realm::AsyncQueryCancelationToken)token {
+    self = [super init];
+    if (self) {
+        _token = std::move(token);
+    }
+    return self;
+}
+
+- (void)stop {
+    _token = {};
+}
+
+@end
 
 static const int RLMEnumerationBufferSize = 16;
 
@@ -411,4 +438,58 @@ static inline void RLMResultsValidateInWriteTransaction(__unsafe_unretained RLMR
     return translateErrors([&] { return _results.get_query().find_all(); });
 }
 
+static std::function<void (realm::Results, std::exception_ptr)> wrapAsyncBlock(void (^block)(RLMResults *, NSError *),
+                                                                               NSString *objectClassName,
+                                                                               RLMRealmConfiguration *config) {
+    auto previousResults = std::make_shared<__weak RLMResults *>();
+    return [=](realm::Results r, std::exception_ptr error) {
+        NSError *err;
+        if (error) {
+            try {
+                rethrow_exception(error);
+            }
+            catch (...) {
+                RLMRealmTranslateException(&err);
+                block(nil, err);
+                return;
+            }
+        }
+
+        @autoreleasepool {
+            RLMRealm *realm = [RLMRealm realmWithConfiguration:config error:&err];
+            if (!realm) {
+                block(nil, err);
+                return;
+            }
+
+            RLMResults *results = *previousResults;
+            if (results) {
+                results->_realm = realm;
+                results->_results = std::move(r);
+            }
+            else {
+                results = [RLMResults resultsWithObjectSchema:realm.schema[objectClassName]
+                                                      results:std::move(r)];
+                *previousResults = results;
+            }
+
+            block(results, nil);
+        }
+    };
+}
+
+- (RLMCancellationToken *)deliverOn:(dispatch_queue_t)queue
+                              block:(void (^)(RLMResults *, NSError *))block {
+    auto token = _results.asyncify(^(std::function<void()> fn) { dispatch_async(queue, ^{
+        @autoreleasepool {
+            fn();
+        }
+    }); }, wrapAsyncBlock(block, self.objectClassName, _realm.configuration));
+    return [[RLMCancellationToken alloc] initWithToken:std::move(token)];
+}
+
+- (RLMCancellationToken *)deliverOnMainThread:(void (^)(RLMResults *, NSError *))block {
+    auto token = _results.asyncify(wrapAsyncBlock(block, self.objectClassName, _realm.configuration));
+    return [[RLMCancellationToken alloc] initWithToken:std::move(token)];
+}
 @end

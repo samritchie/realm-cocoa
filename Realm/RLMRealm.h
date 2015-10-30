@@ -125,7 +125,7 @@ RLM_ASSUME_NONNULL_BEGIN
 
 #pragma mark - Notifications
 
-typedef void(^RLMNotificationBlock)(NSString *notification, RLMRealm *realm);
+typedef void (^RLMNotificationBlock)(NSString *notification, RLMRealm *realm);
 
 /**---------------------------------------------------------------------------------------
  *  @name Receiving Notification when a Realm Changes
@@ -148,8 +148,8 @@ typedef void(^RLMNotificationBlock)(NSString *notification, RLMRealm *realm);
 
  @param block   A block which is called to process RLMRealm notifications.
 
- @return A token object which can later be passed to `-removeNotification:`
-         to remove this notification.
+ @return A token object which must be stored as long as you wish to continue
+         receiving change notifications.
  */
 - (RLMNotificationToken *)addNotificationBlock:(RLMNotificationBlock)block;
 
@@ -503,13 +503,18 @@ typedef void (^RLMMigrationBlock)(RLMMigration *migration, uint64_t oldSchemaVer
 //
 //-(void)setObject:(RLMObject *)obj forKeyedSubscript:(id <NSCopying>)key;
 
-
 @end
 
-//
-// Notification token - holds onto the realm and the notification block
-//
+/**
+ A token which is returned from methods which subscribe to changes to a Realm.
+
+ Change subscriptions in Realm return an RLMNotificationToken which can be used
+ to unsubscribe from the changes. You must store a strong reference to the token
+ for as long as you want to continue to receive notifications. When you wish to
+ stop, call the `-stop` method.
+ */
 @interface RLMNotificationToken : NSObject
+- (void)stop;
 @end
 
 RLM_ASSUME_NONNULL_END

@@ -325,9 +325,9 @@ public:
 namespace realm {
 namespace _impl {
 namespace transaction {
-void advance(SharedGroup& sg, ClientHistory& history, BindingContext* delegate) {
+void advance(SharedGroup& sg, ClientHistory& history, BindingContext* delegate, SharedGroup::VersionID version) {
     TransactLogHandler(delegate, sg, [&](auto&&... args) {
-        LangBindHelper::advance_read(sg, history, std::move(args)...);
+        LangBindHelper::advance_read(sg, history, std::move(args)..., version);
     });
 }
 

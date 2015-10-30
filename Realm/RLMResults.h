@@ -22,7 +22,7 @@
 
 RLM_ASSUME_NONNULL_BEGIN
 
-@class RLMObject, RLMRealm;
+@class RLMObject, RLMRealm, RLMNotificationToken;
 
 /**
  RLMResults is an auto-updating container type in Realm returned from object
@@ -162,6 +162,58 @@ RLM_ASSUME_NONNULL_BEGIN
  @return    An RLMResults sorted by the specified properties.
  */
 - (RLMResults RLM_GENERIC_RETURN*)sortedResultsUsingDescriptors:(NSArray *)properties;
+
+#pragma mark -
+
+
+/**---------------------------------------------------------------------------------------
+ *  @name Delivery
+ *  ---------------------------------------------------------------------------------------
+ */
+
+/**
+ Asynchronously run this query and then pass the result to the block on the given dispatch queue.
+
+ The block will be called again each time the results change. The determination
+ for when results change is currently very coarse.
+
+ To stop receiving updates, call `-cancel` on the returned cancellation token.
+
+ If an error occurs the block will be called with `nil` for the results
+ parameter and a non-`nil` error.
+
+ @warning This method cannot be called during a write transaction, or when the
+          containing realm is read-only.
+
+ @param queue The dispatch queue onto which the results should be delivered.
+ @param block The block to be called on the given `queue` with the queue-local copy of the results.
+ */
+- (RLMNotificationToken *)deliverOn:(dispatch_queue_t)queue
+                              block:(void (^)(RLMResults RLM_GENERIC_RETURN * __nullable, NSError * __nullable))block;
+
+/**
+ Asynchronously run this query and then pass the result to the block on the main thread.
+
+ The block will be called again each time the results change. The determination
+ for when results change is currently very coarse.
+
+ To stop receiving updates, call `-cancel` on the returned cancellation token.
+
+ If an error occurs the block will be called with `nil` for the results
+ parameter and a non-`nil` error.
+
+ Storing the RLMResults or any objects accessed from it and then continuing to
+ access them from outside the block on the main thread is safe. Note, however,
+ that if you manually call `-[RLMRealm refresh]` or perform a write transaction
+ on the main thread, accessing the results afterwards may result in the query
+ being rerun syncronously.
+
+ @warning This method cannot be called during a write transaction, or when the
+          containing realm is read-only.
+
+ @param block The block to be called on the given `queue` with the queue-local copy of the results.
+ */
+- (RLMNotificationToken *)deliverOnMainThread:(void (^)(RLMResults RLM_GENERIC_RETURN * __nullable, NSError * __nullable))block;
 
 #pragma mark -
 
