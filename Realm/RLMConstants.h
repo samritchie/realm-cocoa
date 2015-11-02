@@ -103,8 +103,6 @@ typedef NS_ENUM(NSInteger, RLMError) {
     RLMErrorFilePermissionDenied  = 3,
     /** Returned by RLMRealm if no_create was specified and the file did already exist when the realm is opened. */
     RLMErrorFileExists            = 4,
-    /** Returned by RLMRealm if no_create was specified and the file was not found when the realm is opened. */
-    RLMErrorFileNotFound          = 5,
     /** Returned by RLMRealm if the database file is currently open in another
         process which cannot share with the current process due to an
         architecture mismatch. */
