@@ -62,6 +62,9 @@ public:
     // Get the currently applied sort order for this Results
     SortOrder const& get_sort() const noexcept { return m_sort; }
 
+    // Get the object type which will be returned by get()
+    StringData get_object_type() const noexcept;
+
     // Get the size of this results
     // Can be either O(1) or O(N) depending on the state of things
     size_t size();
@@ -125,8 +128,8 @@ public:
 
     // The input Row object belongs to a different table
     struct IncorrectTableException {
-        const Table* expected;
-        const Table* actual;
+        StringData expected;
+        StringData actual;
     };
 
     // The requested aggregate operation is not supported for the column type
