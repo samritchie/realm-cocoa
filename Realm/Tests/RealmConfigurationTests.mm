@@ -60,8 +60,13 @@
     RLMAssertThrowsWithReasonMatching(configuration.encryptionKey = [NSData data], @"Encryption key must be exactly 64 bytes long");
 
     NSData *key = RLMGenerateKey();
+#if TARGET_OS_TV
+    // Encryption feature is not supported on tvOS
+    XCTAssertThrows(configuration.encryptionKey = key);
+#else
     configuration.encryptionKey = key;
     XCTAssertEqualObjects(configuration.encryptionKey, key);
+#endif
 }
 
 - (void)testSchemaVersionValidation {
@@ -149,6 +154,10 @@
     RLMRealmConfiguration.defaultConfiguration = config;
 
     if (!RLMIsDebuggerAttached()) {
+#if TARGET_OS_TV
+        // Encryption feature is not supported on tvOS
+        XCTAssertThrows(config.encryptionKey = RLMGenerateKey());
+#else
         config.encryptionKey = RLMGenerateKey();
         RLMRealmConfiguration.defaultConfiguration = config;
         @autoreleasepool {
@@ -165,6 +174,7 @@
         config.encryptionKey = RLMGenerateKey();
         RLMRealmConfiguration.defaultConfiguration = config;
         @autoreleasepool { XCTAssertThrows([RLMRealm defaultRealm]); }
+#endif
     }
 
     // Verify that the default realm's migration block is used implicitly
