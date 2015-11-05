@@ -92,8 +92,8 @@ NSData *RLMRealmValidatedEncryptionKey(NSData *key) {
         if (RLMIsDebuggerAttached()) {
             @throw RLMException(@"Cannot open an encrypted Realm with a debugger attached to the process");
         }
-#if TARGET_OS_WATCH
-        @throw RLMException(@"Cannot open an encrypted Realm on watchOS.");
+#if TARGET_OS_WATCH || TARGET_OS_TV
+        @throw RLMException(@"Cannot open an encrypted Realm on watchOS and tvOS.");
 #endif
     }
 
