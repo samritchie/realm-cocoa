@@ -29,33 +29,22 @@ namespace realm {
 namespace _impl {
 class AsyncQuery : public std::enable_shared_from_this<AsyncQuery> {
 public:
-    RealmCoordinator& parent;
+    std::shared_ptr<RealmCoordinator> parent;
 
     AsyncQuery(SortOrder sort,
                std::unique_ptr<SharedGroup::Handover<Query>> handover,
-               Dispatcher dispatcher,
-               std::function<void (Results, std::exception_ptr)> fn,
+               std::unique_ptr<AsyncQueryCallback> callback,
                RealmCoordinator& parent);
 
-    std::function<void()> get_results_for(const SharedRealm& realm, SharedGroup& sg);
-    void deliver_error();
+    void get_results(const SharedRealm& realm, SharedGroup& sg, std::vector<std::function<void()>>& ret);
 
-    bool update();
-    void set_error(std::exception_ptr err) { m_error = err; }
+    void update();
+    void set_error(std::exception_ptr err);
 
     SharedGroup::VersionID version() const noexcept;
 
     void attach_to(SharedGroup& sg);
     void detatch();
-
-    enum class Mode {
-        Push,
-        Pull
-    };
-
-    Mode get_mode() const { return m_dispatcher ? Mode::Push : Mode::Pull; }
-
-    void dispatch(std::function<void ()> fn);
 
 private:
     const SortOrder m_sort;
@@ -66,8 +55,7 @@ private:
     std::unique_ptr<SharedGroup::Handover<TableView>> m_tv_handover;
     TableView m_tv;
 
-    const Dispatcher m_dispatcher;
-    const std::function<void (Results, std::exception_ptr)> m_fn;
+    const std::unique_ptr<AsyncQueryCallback> m_callback;
 
     SharedGroup* m_sg = nullptr;
 

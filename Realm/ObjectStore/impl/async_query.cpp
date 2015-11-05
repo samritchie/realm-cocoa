@@ -25,65 +25,59 @@ using namespace realm::_impl;
 
 AsyncQuery::AsyncQuery(SortOrder sort,
                        std::unique_ptr<SharedGroup::Handover<Query>> handover,
-                       Dispatcher dispatcher,
-                       std::function<void (Results, std::exception_ptr)> fn,
+                       std::unique_ptr<AsyncQueryCallback> callback,
                        RealmCoordinator& parent)
 : m_sort(std::move(sort))
 , m_query_handover(std::move(handover))
-, m_dispatcher(std::move(dispatcher))
-, m_fn(std::move(fn))
-, parent(parent)
+, m_callback(std::move(callback))
+, parent(parent.shared_from_this())
 {
 }
 
-void AsyncQuery::deliver_error()
+void AsyncQuery::get_results(const SharedRealm& realm, SharedGroup& sg, std::vector<std::function<void()>>& ret)
 {
-    REALM_ASSERT(m_error);
-    m_fn({}, m_error);
-}
+    if (!m_callback->is_for_current_thread()) {
+        return;
+    }
 
-std::function<void()> AsyncQuery::get_results_for(const SharedRealm& realm, SharedGroup& sg)
-{
     if (m_error) {
-        std::weak_ptr<AsyncQuery> self = shared_from_this();
-        return [error = std::move(m_error), fn = m_fn, self] {
-            fn(Results(), error);
-
-            if (auto strongSelf = self.lock()) {
-                RealmCoordinator::unregister_query(*strongSelf);
-            }
-        };
+        ret.emplace_back([self = shared_from_this()] {
+            self->m_callback->error(self->m_error);
+            RealmCoordinator::unregister_query(*self);
+        });
+        return;
     }
 
     if (!m_query_handover) {
-        return nullptr;
+        return;
     }
     REALM_ASSERT(m_tv_handover);
     if (m_query_handover->version < sg.get_version_of_current_transaction()) {
         // async results are stale; ignore
-        return nullptr;
+        return;
     }
     auto r = Results(realm,
                      std::move(*sg.import_from_handover(std::move(m_query_handover))),
                      m_sort,
                      std::move(*sg.import_from_handover(std::move(m_tv_handover))));
     auto version = sg.get_version_of_current_transaction();
-    return [r = std::move(r), fn = m_fn, version, &sg] {
+    ret.emplace_back([r = std::move(r), version, &sg, self = shared_from_this()] {
         if (sg.get_version_of_current_transaction() == version) {
-            fn(r, nullptr);
+            self->m_callback->deliver(std::move(r));
         }
-    };
+    });
 }
 
-bool AsyncQuery::update()
+void AsyncQuery::update()
 {
     REALM_ASSERT(m_sg);
 
     if (m_tv.is_attached()) {
-        // Always need to generate a new handover object if the old one hasn't
-        // been used yet as it's now stale
+        // No need to notify if the tv hasn't changed and our last notification
+        // was already consumed, but if it hasn't been consumed yet we need to
+        // re-export it at the new version
         if (!m_tv_handover && m_tv.is_in_sync()) {
-            return false;
+            return;
         }
         m_tv.sync_if_needed();
     }
@@ -97,7 +91,15 @@ bool AsyncQuery::update()
     // FIXME: Stay does not work?
     m_tv_handover = m_sg->export_for_handover(m_tv, ConstSourcePayload::Copy);
     m_query_handover = m_sg->export_for_handover(*m_query, ConstSourcePayload::Stay);
-    return true;
+
+    m_callback->update_ready();
+}
+
+void AsyncQuery::set_error(std::exception_ptr err) {
+    if (!m_error) {
+        m_error = err;
+        m_callback->update_ready();
+    }
 }
 
 SharedGroup::VersionID AsyncQuery::version() const noexcept
@@ -119,10 +121,4 @@ void AsyncQuery::detatch()
 
     m_query_handover = m_sg->export_for_handover(*m_query, MutableSourcePayload::Move);
     m_sg = nullptr;
-}
-
-void AsyncQuery::dispatch(std::function<void ()> fn)
-{
-    REALM_ASSERT(m_dispatcher);
-    m_dispatcher(std::move(fn));
 }

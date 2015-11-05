@@ -106,6 +106,11 @@ std::shared_ptr<Realm> RealmCoordinator::get_realm(Realm::Config config)
     return realm;
 }
 
+std::shared_ptr<Realm> RealmCoordinator::get_realm()
+{
+    return get_realm(m_config);
+}
+
 const Schema* RealmCoordinator::get_schema() const noexcept
 {
     // FIXME: this is not thread-safe
@@ -183,12 +188,12 @@ void RealmCoordinator::pin_version(uint_fast64_t version, uint_fast32_t index)
     }
 }
 
-AsyncQueryCancelationToken RealmCoordinator::register_query(const Results& r, Dispatcher dispatcher, std::function<void (Results, std::exception_ptr)> fn)
+AsyncQueryCancelationToken RealmCoordinator::register_query(const Results& r, std::unique_ptr<AsyncQueryCallback> target)
 {
-    return r.get_realm().m_coordinator->do_register_query(r, std::move(dispatcher), std::move(fn));
+    return r.get_realm().m_coordinator->do_register_query(r, std::move(target));
 }
 
-AsyncQueryCancelationToken RealmCoordinator::do_register_query(const Results& r, Dispatcher dispatcher, std::function<void (Results, std::exception_ptr)> fn)
+AsyncQueryCancelationToken RealmCoordinator::do_register_query(const Results& r, std::unique_ptr<AsyncQueryCallback> target)
 {
     if (m_config.read_only) {
         throw "no async read only";
@@ -198,8 +203,7 @@ AsyncQueryCancelationToken RealmCoordinator::do_register_query(const Results& r,
     auto version = handover->version;
     auto query = std::make_shared<AsyncQuery>(r.get_sort(),
                                               std::move(handover),
-                                              std::move(dispatcher),
-                                              std::move(fn),
+                                              std::move(target),
                                               *this);
 
     {
@@ -214,7 +218,7 @@ AsyncQueryCancelationToken RealmCoordinator::do_register_query(const Results& r,
 
 void RealmCoordinator::unregister_query(AsyncQuery& registration)
 {
-    registration.parent.do_unregister_query(registration);
+    registration.parent->do_unregister_query(registration);
 }
 
 void RealmCoordinator::do_unregister_query(AsyncQuery& registration)
@@ -325,56 +329,10 @@ void RealmCoordinator::update_async_queries()
         if (m_async_error) {
             query->set_error(m_async_error);
         }
-        else if (!query->update()) {
-            continue;
-        }
-        if (query->get_mode() != AsyncQuery::Mode::Push) {
-            continue;
-        }
-
-        std::weak_ptr<AsyncQuery> q = query;
-        std::weak_ptr<RealmCoordinator> weak_self = shared_from_this();
-        query->dispatch([q, weak_self] {
-            auto self = weak_self.lock();
-            auto query = q.lock();
-            if (!query || !self) {
-                return;
-            }
-
-            if (self->m_async_error) {
-                query->deliver_error();
-                unregister_query(*query);
-                return;
-            }
-
-            SharedRealm realm = Realm::get_shared_realm(self->m_config);
-            std::function<void()> fn;
-            {
-                std::lock_guard<std::mutex> lock(self->m_query_mutex);
-                fn = query->get_results_for(realm, *realm->m_shared_group);
-            }
-            if (fn) {
-                fn();
-            }
-        });
-    }
-}
-
-namespace  {
-std::vector<std::function<void()>> get_ready_queries_for_thread(std::vector<std::shared_ptr<_impl::AsyncQuery>>& queries,
-                                                                Realm& realm, SharedGroup& sg) {
-    std::vector<std::function<void()>> ret;
-    for (auto& query : queries) {
-        if (query->get_mode() != AsyncQuery::Mode::Pull) {
-            continue;
-        }
-
-        if (auto r = query->get_results_for(realm.shared_from_this(), sg)) {
-            ret.push_back(std::move(r));
+        else {
+            query->update();
         }
     }
-    return ret;
-}
 }
 
 void RealmCoordinator::advance_to_ready(Realm& realm)
@@ -386,11 +344,9 @@ void RealmCoordinator::advance_to_ready(Realm& realm)
 
         SharedGroup::VersionID version;
         for (auto& query : m_queries) {
-            if (query->get_mode() == AsyncQuery::Mode::Pull) {
-                version = query->version();
-                if (version != SharedGroup::VersionID()) {
-                    break;
-                }
+            version = query->version();
+            if (version != SharedGroup::VersionID()) {
+                break;
             }
         }
 
@@ -405,7 +361,10 @@ void RealmCoordinator::advance_to_ready(Realm& realm)
         }
 
         transaction::advance(*realm.m_shared_group, *realm.m_history, realm.m_binding_context.get(), version);
-        async_results = get_ready_queries_for_thread(m_queries, realm, *realm.m_shared_group);
+
+        for (auto& query : m_queries) {
+            query->get_results(realm.shared_from_this(), *realm.m_shared_group, async_results);
+        }
     }
 
     for (auto& results : async_results) {
@@ -419,7 +378,9 @@ void RealmCoordinator::process_available_async(Realm& realm)
 
     {
         std::lock_guard<std::mutex> lock(m_query_mutex);
-        async_results = get_ready_queries_for_thread(m_queries, realm, *realm.m_shared_group);
+        for (auto& query : m_queries) {
+            query->get_results(realm.shared_from_this(), *realm.m_shared_group, async_results);
+        }
     }
 
     for (auto& results : async_results) {

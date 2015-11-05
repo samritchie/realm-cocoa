@@ -24,12 +24,11 @@
 #include <realm/string_data.hpp>
 
 namespace realm {
-class Results;
-struct AsyncQueryCancelationToken;
+class AsyncQueryCallback;
 class ClientHistory;
+class Results;
 class SharedGroup;
-
-using Dispatcher = std::function<void (std::function<void()>)>;
+struct AsyncQueryCancelationToken;
 
 namespace _impl {
 class AsyncQuery;
@@ -49,6 +48,7 @@ public:
     // If the Realm is already open on another thread, validates that the given
     // configuration is compatible with the existing one
     std::shared_ptr<Realm> get_realm(Realm::Config config);
+    std::shared_ptr<Realm> get_realm();
 
     const Schema* get_schema() const noexcept;
     uint64_t get_schema_version() const noexcept { return m_config.schema_version; }
@@ -74,7 +74,7 @@ public:
     // Called by m_notifier when there's a new commit to send notifications for
     void on_change();
 
-    static AsyncQueryCancelationToken register_query(const Results& r, Dispatcher dispatcher, std::function<void (Results, std::exception_ptr)> fn);
+    static AsyncQueryCancelationToken register_query(const Results& r, std::unique_ptr<AsyncQueryCallback>);
     static void unregister_query(AsyncQuery& registration);
 
     // Advance the Realm to the most recent transaction version which all async
@@ -104,7 +104,7 @@ private:
 
     std::unique_ptr<_impl::ExternalCommitHelper> m_notifier;
 
-    AsyncQueryCancelationToken do_register_query(const Results& r, Dispatcher dispatcher, std::function<void (Results, std::exception_ptr)> fn);
+    AsyncQueryCancelationToken do_register_query(const Results& r, std::unique_ptr<AsyncQueryCallback>);
     void do_unregister_query(AsyncQuery& registration);
 
     // must be called with m_query_mutex locked

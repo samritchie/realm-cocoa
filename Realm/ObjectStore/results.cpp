@@ -332,20 +332,15 @@ Results::UnsupportedColumnTypeException::UnsupportedColumnTypeException(size_t c
     column_type = table->get_column_type(column);
 }
 
-AsyncQueryCancelationToken Results::asyncify(Dispatcher dispatcher, std::function<void (Results, std::exception_ptr)> fn)
+AsyncQueryCancelationToken Results::asyncify(std::unique_ptr<AsyncQueryCallback> target)
 {
-    return _impl::RealmCoordinator::register_query(*this, dispatcher, std::move(fn));
-}
-
-AsyncQueryCancelationToken Results::asyncify(std::function<void (Results, std::exception_ptr)> fn)
-{
-    return _impl::RealmCoordinator::register_query(*this, nullptr, std::move(fn));
+    return _impl::RealmCoordinator::register_query(*this, std::move(target));
 }
 
 AsyncQueryCancelationToken::~AsyncQueryCancelationToken()
 {
-    if (auto query = m_registration.lock()) {
-        _impl::RealmCoordinator::unregister_query(*query);
+    if (m_registration) {
+        _impl::RealmCoordinator::unregister_query(*m_registration);
     }
 }
 
@@ -357,8 +352,8 @@ AsyncQueryCancelationToken::AsyncQueryCancelationToken(AsyncQueryCancelationToke
 AsyncQueryCancelationToken& AsyncQueryCancelationToken::operator=(realm::AsyncQueryCancelationToken&& rgt)
 {
     if (this != &rgt) {
-        if (auto query = m_registration.lock()) {
-            _impl::RealmCoordinator::unregister_query(*query);
+        if (m_registration) {
+            _impl::RealmCoordinator::unregister_query(*m_registration);
         }
         m_registration = std::move(rgt.m_registration);
     }

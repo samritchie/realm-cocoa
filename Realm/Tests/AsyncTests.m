@@ -20,6 +20,9 @@
 
 #pragma clang diagnostic ignored "-Wunused-parameter"
 
+// FIXME: test that things show up on the correct queue
+// FIXME: test queue + main thread targets at same time
+
 @interface AsyncTests : RLMTestCase
 @end
 
@@ -354,43 +357,49 @@
 
     XCTAssertEqual(3, firstBlockCalls);
     XCTAssertEqual(2, secondBlockCalls);
+
+    dispatch_sync(queue, ^{});
 }
 
 - (void)testCancelSubscriptionWithPendingReadyResulsts {
-    // This test relies on blocks being called in the order in which they are
-    // added, which is an implementation detail that could change
+    // This test relies on the specific order in which things are called after
+    // a commit, which is an implementation detail that could change
 
-    dispatch_queue_t queue = dispatch_queue_create("queue", 0);
+    dispatch_queue_t queue = dispatch_queue_create("queue", DISPATCH_QUEUE_SERIAL);
     dispatch_semaphore_t sema = dispatch_semaphore_create(0);
-    __block int firstBlockCalls = 0;
-    __block int secondBlockCalls = 0;
-    __block RLMNotificationToken *token;
 
-    [IntObject.allObjects deliverOn:queue block:^(RLMResults *results, NSError * _Nullable e) {
-        ++firstBlockCalls;
-        if (firstBlockCalls == 2) {
-            [token stop];
-        }
+    // Create the async query and wait for the first run of it to complete
+    __block int calls = 0;
+    RLMNotificationToken *queryToken = [IntObject.allObjects deliverOn:queue block:^(RLMResults *results, NSError * _Nullable e) {
+        ++calls;
         dispatch_semaphore_signal(sema);
     }];
+    dispatch_semaphore_wait(sema, DISPATCH_TIME_FOREVER);
 
-    token = [IntObject.allObjects deliverOn:queue block:^(RLMResults *results, NSError * _Nullable e) {
-        ++secondBlockCalls;
+    // Block the queue which we've asked for results to be delivered on until
+    // the main thread gets a commit notification, which happens only after
+    // all async queries are ready
+    dispatch_semaphore_t results_ready_sema = dispatch_semaphore_create(0);
+    dispatch_async(queue , ^{
         dispatch_semaphore_signal(sema);
+        dispatch_semaphore_wait(results_ready_sema, DISPATCH_TIME_FOREVER);
+
+    });
+    dispatch_semaphore_wait(sema, DISPATCH_TIME_FOREVER);
+
+    [self waitForNotification:RLMRealmDidChangeNotification realm:RLMRealm.defaultRealm block:^{
+        [RLMRealm.defaultRealm transactionWithBlock:^{
+            [IntObject createInDefaultRealmWithValue:@[@0]];
+        } error:nil];
     }];
 
-    dispatch_semaphore_wait(sema, DISPATCH_TIME_FOREVER);
-    dispatch_semaphore_wait(sema, DISPATCH_TIME_FOREVER);
+    [queryToken stop];
+    dispatch_semaphore_signal(results_ready_sema);
 
-    [RLMRealm.defaultRealm transactionWithBlock:^{
-        [IntObject createInDefaultRealmWithValue:@[@0]];
-    } error:nil];
-
-    dispatch_semaphore_wait(sema, DISPATCH_TIME_FOREVER);
     dispatch_sync(queue, ^{});
 
-    XCTAssertEqual(2, firstBlockCalls);
-    XCTAssertEqual(1, secondBlockCalls);
+    // Should have been called for the first run, but not after the commit
+    XCTAssertEqual(1, calls);
 }
 
 - (void)testErrorHandling {
@@ -497,6 +506,32 @@
     }];
     [self waitForExpectationsWithTimeout:2.0 handler:nil];
     XCTAssertNil(prev);
+}
+
+- (void)testCancellationTokenKeepsSubscriptionAlive {
+    __block XCTestExpectation *expectation = [self expectationWithDescription:@""];
+    RLMNotificationToken *token;
+    @autoreleasepool {
+        token = [IntObject.allObjects deliverOnMainThread:^(RLMResults *results, NSError *err) {
+            XCTAssertNotNil(results);
+            XCTAssertNil(err);
+            [expectation fulfill];
+        }];
+    }
+    [self waitForExpectationsWithTimeout:2.0 handler:nil];
+
+    // at this point there are no strong references to anything other than the
+    // token, so verify that things haven't magically gone away
+    // this would be better as a multi-process tests with the commit done
+    // from a different process
+
+    expectation = [self expectationWithDescription:@""];
+    @autoreleasepool {
+        [RLMRealm.defaultRealm transactionWithBlock:^{
+            [IntObject createInDefaultRealmWithValue:@[@0]];
+        }];
+    }
+    [self waitForExpectationsWithTimeout:2.0 handler:nil];
 }
 
 @end
